@@ -194,5 +194,5 @@ PRs são bem-vindos:
 
 ## Autor
 
-Nito ST
+Adjelson das Neves
 

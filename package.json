@@ -1,0 +1,19 @@
+{
+  "name": "sqlite-to-sql",
+  "version": "1.0.0",
+  "description": "Node.js CLI to export SQLite .sqlite/.db into .sql with optional MySQL dialect conversion",
+  "type": "module",
+  "bin": {
+    "sqlite-to-sql": "./bin/sqlite-to-sql.js"
+  },
+  "scripts": {
+    "start": "node ./bin/sqlite-to-sql.js --help"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
