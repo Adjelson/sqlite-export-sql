@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node_modules/.bin/electron --version)",
+      "Bash(ls node_modules/.bin/electron*)",
+      "Bash(node -e \"const p = require\\('./node_modules/electron/package.json'\\); console.log\\(JSON.stringify\\({main:p.main, exports:p.exports, version:p.version}, null, 2\\)\\)\")"
+    ]
+  }
+}

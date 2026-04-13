@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>sqlite-to-sql</title>
+  <style>
+    /* ── Reset ─────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --primary: #2563eb;
+      --prim-h:  #1d4ed8;
+      --text:    #0f172a;
+      --muted:   #64748b;
+      --ok:      #16a34a;
+      --warn:    #d97706;
+      --err:     #dc2626;
+      --code-bg: #0f172a;
+      --code-fg: #e2e8f0;
+      --r:       10px;
+      --shadow:  0 1px 3px rgba(0,0,0,.07), 0 4px 14px rgba(0,0,0,.05);
+    }
+
+    body {
+      font-family: system-ui,-apple-system,'Segoe UI',sans-serif;
+      font-size: 14px; line-height: 1.6;
+      background: var(--bg); color: var(--text);
+      height: 100vh; display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Title bar area (draggable) ───────────────────────────────────── */
+    .titlebar {
+      -webkit-app-region: drag;
+      height: 36px;
+      background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%);
+      display: flex; align-items: center;
+      padding: 0 16px; gap: 10px; flex-shrink: 0;
+    }
+    .titlebar-logo {
+      width: 18px; height: 18px; opacity: .9;
+      -webkit-app-region: no-drag;
+    }
+    .titlebar-title {
+      font-size: .8rem; font-weight: 700; color: rgba(255,255,255,.9);
+      letter-spacing: .03em; -webkit-app-region: no-drag;
+    }
+    .titlebar-info {
+      margin-left: auto;
+      font-size: .7rem; color: rgba(255,255,255,.55);
+      -webkit-app-region: no-drag;
+    }
+
+    /* ── Scrollable content ────────────────────────────────────────────── */
+    .scroll {
+      flex: 1; overflow-y: auto;
+      padding: 20px 24px 40px;
+    }
+
+    /* ── Grid ──────────────────────────────────────────────────────────── */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px; align-items: start;
+    }
+    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+
+    /* ── Card ──────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+    .card-title {
+      font-size: .72rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: .09em;
+      color: var(--muted); margin-bottom: 18px;
+    }
+
+    /* ── Fields ────────────────────────────────────────────────────────── */
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block; font-size: .84rem; font-weight: 600; margin-bottom: 5px;
+    }
+    .field small { display: block; color: var(--muted); font-size: .76rem; margin-top: 3px; }
+
+    input[type="number"],
+    input[type="text"],
+    select {
+      width: 100%; padding: 8px 11px;
+      border: 1.5px solid var(--border); border-radius: 7px;
+      font-size: .84rem; font-family: inherit;
+      background: #fff; color: var(--text); outline: none;
+      transition: border-color .15s;
+    }
+    input:focus, select:focus { border-color: var(--primary); }
+
+    /* ── Drop zone ─────────────────────────────────────────────────────── */
+    .drop-zone {
+      border: 2px dashed var(--border); border-radius: 8px;
+      padding: 18px 14px; text-align: center; cursor: pointer;
+      transition: border-color .2s, background .2s; position: relative;
+    }
+    .drop-zone:hover, .drop-zone.over {
+      border-color: var(--primary); background: #eff6ff;
+    }
+    .drop-zone svg   { color: var(--muted); margin-bottom: 6px; }
+    .drop-zone p     { font-size: .84rem; color: var(--muted); }
+    .drop-zone p strong { color: var(--primary); }
+    .dz-state        { display: none; align-items: center; gap: 8px; font-size: .84rem; font-weight: 600; }
+    .dz-state svg    { color: var(--ok); flex-shrink: 0; }
+    .dz-state.active { display: flex; justify-content: center; }
+
+    /* Inline open-file button sits over drop-zone */
+    .dz-overlay {
+      position: absolute; inset: 0; cursor: pointer;
+    }
+
+    /* ── Dialect tabs ──────────────────────────────────────────────────── */
+    .dialect-group { display: flex; }
+    .dialect-group input { display: none; }
+    .dialect-group label {
+      flex: 1; text-align: center; padding: 8px;
+      font-size: .84rem; font-weight: 600; cursor: pointer; margin: 0;
+      border: 1.5px solid var(--border); color: var(--muted);
+      transition: all .15s;
+    }
+    .dialect-group label:first-of-type { border-radius: 7px 0 0 7px; }
+    .dialect-group label:last-of-type  { border-radius: 0 7px 7px 0; border-left: none; }
+    .dialect-group input:checked + label {
+      background: var(--primary); border-color: var(--primary); color: #fff;
+    }
+
+    /* ── Checkboxes ────────────────────────────────────────────────────── */
+    .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .check-item {
+      display: flex; align-items: center; gap: 7px; cursor: pointer;
+      padding: 6px 9px; border: 1.5px solid var(--border); border-radius: 7px;
+      font-size: .8rem; user-select: none; transition: all .12s;
+    }
+    .check-item input { accent-color: var(--primary); width: 13px; height: 13px; flex-shrink: 0; }
+    .check-item:has(input:checked) { border-color: #bfdbfe; background: #eff6ff; }
+
+    /* ── Convert button ────────────────────────────────────────────────── */
+    .btn-convert {
+      width: 100%; padding: 11px;
+      background: var(--primary); color: #fff;
+      border: none; border-radius: 8px;
+      font-size: .9rem; font-weight: 700; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      transition: background .15s, transform .1s, opacity .15s; margin-top: 4px;
+    }
+    .btn-convert:hover  { background: var(--prim-h); }
+    .btn-convert:active { transform: scale(.98); }
+    .btn-convert:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+
+    .spinner {
+      display: none; width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading .spinner  { display: block; }
+    .loading .btn-icon { display: none; }
+    .loading .btn-txt  { display: none; }
+
+    /* ── Help ──────────────────────────────────────────────────────────── */
+    .steps { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+    .step  { display: flex; gap: 10px; align-items: flex-start; }
+    .step-num {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: #dbeafe; color: var(--primary);
+      font-size: .75rem; font-weight: 800;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px;
+    }
+    .step strong { display: block; font-size: .84rem; }
+    .step small  { color: var(--muted); font-size: .77rem; }
+
+    details { border: 1px solid var(--border); border-radius: 8px; }
+    details + details { margin-top: 5px; }
+    summary {
+      padding: 10px 13px; cursor: pointer; list-style: none;
+      font-size: .84rem; font-weight: 600;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: '›'; color: var(--muted); font-size: 1rem; transition: transform .2s; }
+    details[open] summary { border-bottom: 1px solid var(--border); }
+    details[open] summary::after { transform: rotate(90deg); }
+    .db { padding: 12px 13px; font-size: .82rem; color: var(--muted); line-height: 1.7; }
+
+    .type-map { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .type-row { display: flex; align-items: center; gap: 6px; padding: 4px 7px; background: #f8fafc; border-radius: 5px; font-size: .77rem; }
+    .tf { font-family: monospace; color: #dc2626; font-weight: 700; }
+    .ta { color: var(--muted); }
+    .tt { font-family: monospace; color: #16a34a; font-weight: 700; }
+
+    code { font-family: 'Cascadia Code','Fira Code',monospace; background: #f1f5f9; border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; font-size: .78rem; }
+    .cli-blk { background: var(--code-bg); color: var(--code-fg); border-radius: 7px; padding: 10px 13px; margin-top: 7px; font-family: monospace; font-size: .78rem; white-space: pre; overflow-x: auto; }
+    .limit-list { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+    .limit-list li { display: flex; gap: 7px; font-size: .8rem; padding: 5px 9px; background: #fffbeb; border-radius: 5px; border-left: 3px solid #f59e0b; }
+    .limit-list li::before { content: '!'; font-weight: 800; color: #d97706; }
+    hr.div { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+
+    /* ── Result card ───────────────────────────────────────────────────── */
+    #resultCard { display: none; margin-top: 18px; }
+    #resultCard.visible { display: block; }
+
+    .result-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+    .meta-chip {
+      background: #f8fafc; border: 1px solid var(--border);
+      border-radius: 99px; padding: 3px 11px;
+      font-size: .76rem; font-weight: 600; color: var(--muted);
+    }
+    .meta-chip span { color: var(--text); }
+
+    .result-actions { display: flex; gap: 9px; margin-bottom: 12px; flex-wrap: wrap; }
+    .btn {
+      padding: 7px 16px; border-radius: 7px; font-size: .84rem;
+      font-weight: 600; cursor: pointer; border: none;
+      display: flex; align-items: center; gap: 6px; transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-dl   { background: var(--primary); color: #fff; }
+    .btn-copy { background: transparent; border: 1.5px solid var(--border); color: var(--text); }
+
+    .sql-out {
+      background: var(--code-bg); color: var(--code-fg);
+      border-radius: 8px; padding: 14px 16px;
+      font-family: 'Cascadia Code','Fira Code','Consolas',monospace;
+      font-size: .77rem; line-height: 1.65; overflow: auto; max-height: 340px;
+      white-space: pre; tab-size: 2;
+    }
+    .preview-note {
+      text-align: center; padding: 8px 0 0;
+      color: #475569; font-size: .76rem;
+      border-top: 1px solid #1e293b; margin-top: 5px;
+    }
+
+    /* ── Toast ─────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+      padding: 10px 16px; border-radius: 8px;
+      font-size: .84rem; font-weight: 600; max-width: 340px;
+      box-shadow: 0 4px 18px rgba(0,0,0,.18);
+      transform: translateY(8px); opacity: 0;
+      transition: opacity .25s, transform .25s; pointer-events: none;
+    }
+    #toast.show { transform: translateY(0); opacity: 1; }
+    #toast.ok   { background: #f0fdf4; border: 1px solid #86efac; color: #14532d; }
+    #toast.bad  { background: #fef2f2; border: 1px solid #fca5a5; color: #7f1d1d; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Title bar ──────────────────────────────────────────────────────── -->
+  <div class="titlebar">
+    <svg class="titlebar-logo" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round"
+            d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h8M8 16h5M8 8h8"/>
+    </svg>
+    <span class="titlebar-title">sqlite-to-sql</span>
+    <span class="titlebar-info" id="sysInfo">carregando…</span>
+  </div>
+
+  <!-- ── Scrollable body ─────────────────────────────────────────────────── -->
+  <div class="scroll">
+    <div class="grid">
+
+      <!-- ── Converter ───────────────────────────────────────────────────── -->
+      <div class="card">
+        <div class="card-title">Conversor</div>
+
+        <!-- Drop zone -->
+        <div class="field">
+          <label>Ficheiro SQLite <span style="color:var(--err)">*</span></label>
+          <div class="drop-zone" id="dropZone">
+            <!-- Invisible overlay → triggers open-file dialog on click -->
+            <div class="dz-overlay" id="dzOverlay"></div>
+
+            <div id="dzPrompt">
+              <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+              </svg>
+              <p><strong>Clica</strong> ou arrasta o ficheiro aqui</p>
+              <p style="font-size:.76rem;margin-top:2px">.sqlite · .db · .sqlite3</p>
+            </div>
+
+            <div class="dz-state" id="dzState">
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+              </svg>
+              <span id="dzName"></span>
+            </div>
+          </div>
+          <small id="dzPath" style="font-family:monospace;word-break:break-all"></small>
+        </div>
+
+        <!-- Dialect -->
+        <div class="field">
+          <label>Dialeto</label>
+          <div class="dialect-group">
+            <input type="radio" name="dialect" id="d-mysql"  value="mysql"  checked>
+            <label for="d-mysql">MySQL / MariaDB</label>
+            <input type="radio" name="dialect" id="d-sqlite" value="sqlite">
+            <label for="d-sqlite">SQLite dump</label>
+          </div>
+        </div>
+
+        <!-- Batch + Tables -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="field" style="margin-bottom:0">
+            <label>Batch (linhas/INSERT)</label>
+            <input type="number" id="batch" value="500" min="1" max="10000">
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <label>Tabelas <span style="font-weight:400;color:var(--muted)">(opcional)</span></label>
+            <input type="text" id="tables" placeholder="users, orders">
+          </div>
+        </div>
+        <div style="margin-bottom:14px"></div>
+
+        <!-- Flags -->
+        <div class="field">
+          <label>Opções</label>
+          <div class="checks">
+            <label class="check-item"><input type="checkbox" id="noData">Só schema</label>
+            <label class="check-item"><input type="checkbox" id="onlyTables">Só tabelas</label>
+            <label class="check-item"><input type="checkbox" id="noIndexes">Sem índices</label>
+            <label class="check-item"><input type="checkbox" id="noViews">Sem views</label>
+            <label class="check-item"><input type="checkbox" id="noTriggers">Sem triggers</label>
+          </div>
+        </div>
+
+        <button id="convertBtn" class="btn-convert">
+          <svg class="btn-icon" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+          <div class="spinner"></div>
+          <span class="btn-txt">Converter</span>
+        </button>
+      </div>
+
+      <!-- ── Help ─────────────────────────────────────────────────────────── -->
+      <div class="card">
+        <div class="card-title">Ajuda</div>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div><strong>Selecciona o ficheiro</strong>
+              <small>Clica na zona de upload ou arrasta um .sqlite / .db.</small></div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div><strong>Escolhe o dialeto</strong>
+              <small><strong>MySQL</strong> — converte tipos, remove cláusulas incompatíveis.<br>
+              <strong>SQLite</strong> — dump fiel para backup/migração.</small></div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div><strong>Ajusta opções</strong>
+              <small>Filtra tabelas por nome, exclui índices/views ou exporta só schema.</small></div>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <div><strong>Guarda e importa</strong>
+              <small><code>mysql -u root -p db &lt; file.sql</code></small></div>
+          </div>
+        </div>
+
+        <hr class="div">
+
+        <details>
+          <summary>Conversões de tipo (SQLite → MySQL)</summary>
+          <div class="db">
+            <div class="type-map">
+              <div class="type-row"><span class="tf">TEXT/CLOB</span><span class="ta">→</span><span class="tt">LONGTEXT</span></div>
+              <div class="type-row"><span class="tf">REAL</span><span class="ta">→</span><span class="tt">DOUBLE</span></div>
+              <div class="type-row"><span class="tf">BLOB</span><span class="ta">→</span><span class="tt">LONGBLOB</span></div>
+              <div class="type-row"><span class="tf">BOOLEAN</span><span class="ta">→</span><span class="tt">TINYINT(1)</span></div>
+              <div class="type-row"><span class="tf">INTEGER</span><span class="ta">→</span><span class="tt">INT</span></div>
+              <div class="type-row"><span class="tf">INT2/INT8</span><span class="ta">→</span><span class="tt">SMALLINT/BIGINT</span></div>
+              <div class="type-row"><span class="tf">NVARCHAR(n)</span><span class="ta">→</span><span class="tt">VARCHAR(n)</span></div>
+              <div class="type-row"><span class="tf">NUMERIC</span><span class="ta">→</span><span class="tt">DECIMAL</span></div>
+              <div class="type-row"><span class="tf">DOUBLE PRECISION</span><span class="ta">→</span><span class="tt">DOUBLE</span></div>
+              <div class="type-row"><span class="tf">AUTOINCREMENT</span><span class="ta">→</span><span class="tt">AUTO_INCREMENT</span></div>
+            </div>
+            <p style="margin-top:9px">Removido: <code>ON CONFLICT</code> · <code>COLLATE NOCASE</code> · <code>STRICT</code> · <code>WITHOUT ROWID</code> · <code>WHERE</code> em índices.</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Importar no MySQL / MariaDB</summary>
+          <div class="db">
+            <div class="cli-blk">mysql -u root -p nome_db &lt; ficheiro.sql
+
+# MariaDB
+mariadb -u root -p nome_db &lt; ficheiro.sql</div>
+            <p style="margin-top:9px">O ficheiro MySQL já inclui <code>SET NAMES utf8mb4</code> e <code>FOREIGN_KEY_CHECKS</code> automaticamente.</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Limitações conhecidas</summary>
+          <div class="db">
+            <ul class="limit-list">
+              <li>VIEWs e TRIGGERs podem precisar revisão manual.</li>
+              <li>Funções SQLite em DEFAULT (<code>datetime('now')</code>) não são convertidas.</li>
+              <li>Índices parciais: cláusula WHERE removida.</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <!-- ── Result ────────────────────────────────────────────────────────── -->
+    <div class="card" id="resultCard">
+      <div class="card-title">Resultado</div>
+      <div class="result-meta" id="resultMeta"></div>
+      <div class="result-actions">
+        <button class="btn btn-dl" id="btnSave">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          <span id="btnSaveLabel">Guardar ficheiro…</span>
+        </button>
+        <button class="btn btn-copy" id="btnCopy">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+          </svg>
+          Copiar SQL
+        </button>
+      </div>
+      <div class="sql-out" id="sqlPreview"></div>
+    </div>
+  </div><!-- /.scroll -->
+
+  <div id="toast"></div>
+
+  <script>
+  /* ══════════════════════════════════════════════════════════════════════
+     App
+     ════════════════════════════════════════════════════════════════════ */
+
+  // ── System info ───────────────────────────────────────────────────────
+  window.api.getInfo().then(({ node, electron, version }) => {
+    document.getElementById('sysInfo').textContent =
+      `Node ${node}  ·  Electron ${electron}  ·  v${version}`;
+  });
+
+  // ── State ─────────────────────────────────────────────────────────────
+  let selectedPath = null;
+  let lastSql      = null;
+  let lastFilename = null;
+
+  // ── Drop zone ─────────────────────────────────────────────────────────
+  const dropZone = document.getElementById('dropZone');
+  const dzPrompt = document.getElementById('dzPrompt');
+  const dzState  = document.getElementById('dzState');
+  const dzName   = document.getElementById('dzName');
+  const dzPath   = document.getElementById('dzPath');
+
+  function setFile(filePath) {
+    if (!filePath) return;
+    selectedPath = filePath;
+    const name = filePath.split(/[\\/]/).pop();
+    dzName.textContent  = name;
+    dzPath.textContent  = filePath;
+    dzState.classList.add('active');
+    dzPrompt.style.display = 'none';
+  }
+
+  // Click → native open dialog
+  document.getElementById('dzOverlay').addEventListener('click', async () => {
+    const p = await window.api.openFile();
+    if (p) setFile(p);
+  });
+
+  // Drag over
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault(); dropZone.classList.add('over');
+  });
+  ['dragleave', 'dragend'].forEach(ev =>
+    dropZone.addEventListener(ev, () => dropZone.classList.remove('over'))
+  );
+
+  // Drop — Electron exposes file.path on the File object
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault(); dropZone.classList.remove('over');
+    const file = e.dataTransfer?.files[0];
+    if (file) setFile(file.path ?? file.name);
+  });
+
+  // ── Toast ─────────────────────────────────────────────────────────────
+  const toast = document.getElementById('toast');
+  let toastTmr;
+  function showToast(msg, type = 'ok') {
+    clearTimeout(toastTmr);
+    toast.textContent = msg;
+    toast.className = `show ${type}`;
+    toastTmr = setTimeout(() => toast.classList.remove('show'), 3500);
+  }
+
+  // ── Loading ───────────────────────────────────────────────────────────
+  const convertBtn = document.getElementById('convertBtn');
+  function setLoading(on) {
+    convertBtn.disabled = on;
+    convertBtn.classList.toggle('loading', on);
+  }
+
+  // ── Dialect helper ────────────────────────────────────────────────────
+  function getDialect() {
+    return document.getElementById('d-mysql').checked ? 'mysql' : 'sqlite';
+  }
+
+  // ── Convert ───────────────────────────────────────────────────────────
+  convertBtn.addEventListener('click', async () => {
+    if (!selectedPath) {
+      showToast('Selecciona um ficheiro .sqlite primeiro.', 'bad');
+      return;
+    }
+
+    const tablesRaw = document.getElementById('tables').value.trim();
+    const onlyTables = document.getElementById('onlyTables').checked;
+
+    const opts = {
+      inputPath:      selectedPath,
+      dialect:        getDialect(),
+      batchSize:      Math.max(1, parseInt(document.getElementById('batch').value) || 500),
+      exportData:     !document.getElementById('noData').checked,
+      exportIndexes:  onlyTables ? false : !document.getElementById('noIndexes').checked,
+      exportViews:    onlyTables ? false : !document.getElementById('noViews').checked,
+      exportTriggers: onlyTables ? false : !document.getElementById('noTriggers').checked,
+      onlyTables,
+      onlyTableNames: tablesRaw
+        ? tablesRaw.split(',').map(s => s.trim()).filter(Boolean)
+        : null,
+    };
+
+    setLoading(true);
+    const result = await window.api.convert(opts);
+    setLoading(false);
+
+    if (!result.success) {
+      showToast(result.error ?? 'Erro desconhecido.', 'bad');
+      return;
+    }
+
+    renderResult(result, opts.dialect);
+    showToast(`Concluído — ${result.lines.toLocaleString('pt')} linhas · ${result.sizeFmt}`, 'ok');
+  });
+
+  // ── Render result ─────────────────────────────────────────────────────
+  function renderResult(r, dialect) {
+    lastSql      = r.sql;
+    lastFilename = selectedPath.split(/[\\/]/).pop().replace(/\.(sqlite|db|sqlite3)$/i, '')
+                   + '.' + dialect + '.sql';
+
+    // Meta chips
+    const chips = [
+      ['Dialeto',  dialect.toUpperCase()],
+      ['Linhas',   r.lines.toLocaleString('pt')],
+      ['Tamanho',  r.sizeFmt],
+    ];
+    document.getElementById('resultMeta').innerHTML = chips
+      .map(([k, v]) => `<span class="meta-chip">${k}: <span>${v}</span></span>`)
+      .join('');
+
+    document.getElementById('btnSaveLabel').textContent = 'Guardar ' + lastFilename;
+
+    // Preview (first 120 lines)
+    const lines = r.sql.split('\n');
+    const pre   = document.getElementById('sqlPreview');
+    pre.textContent = lines.slice(0, 120).join('\n');
+    if (lines.length > 120) {
+      const note = document.createElement('div');
+      note.className = 'preview-note';
+      note.textContent = `— pré-visualização: primeiras 120 de ${lines.length.toLocaleString('pt')} linhas —`;
+      pre.appendChild(note);
+    }
+
+    const card = document.getElementById('resultCard');
+    card.classList.add('visible');
+    setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  }
+
+  // ── Save ──────────────────────────────────────────────────────────────
+  document.getElementById('btnSave').addEventListener('click', async () => {
+    if (!lastSql) return;
+    const r = await window.api.saveFile({ content: lastSql, filename: lastFilename });
+    if (r.saved) {
+      showToast('Guardado em: ' + r.filePath, 'ok');
+    }
+  });
+
+  // ── Copy ──────────────────────────────────────────────────────────────
+  document.getElementById('btnCopy').addEventListener('click', async () => {
+    if (!lastSql) return;
+    try {
+      await navigator.clipboard.writeText(lastSql);
+      const b = document.getElementById('btnCopy');
+      const orig = b.innerHTML;
+      b.innerHTML = '✓ Copiado!';
+      b.style.cssText = 'border-color:var(--ok);color:var(--ok)';
+      setTimeout(() => { b.innerHTML = orig; b.style.cssText = ''; }, 2000);
+    } catch {
+      showToast('Falha ao copiar.', 'bad');
+    }
+  });
+  </script>
+</body>
+</html>

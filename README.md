@@ -1,198 +1,174 @@
-A seguir está um **README.md completo** para um projeto **Node.js (CLI)** que converte um ficheiro **`.sqlite`/`.db`** em **`.sql`**, com opção de dialeto **SQLite** (dump) ou **MySQL/MariaDB** (conversão básica). Pode copiar e colar diretamente como `README.md`.
+# sqlite-to-sql
 
-````md
-# sqlite-to-sql (Node.js CLI)
+CLI em Node.js para converter bases de dados **SQLite** (`.sqlite`, `.db`) em ficheiros **`.sql`**, com suporte a dois dialetos:
 
-Ferramenta CLI em Node.js para converter uma base de dados **SQLite** (`.sqlite`, `.db`) em um ficheiro **`.sql`** (dump), com suporte a:
-- **Dialeto SQLite** (exportação fiel ao SQLite)
-- **Dialeto MySQL/MariaDB** (conversão básica de DDL + INSERTs)
+- **SQLite** — dump fiel ao SQLite original
+- **MySQL / MariaDB** — conversão completa de DDL + dados para importação directa
 
-> Objetivo: gerar um `.sql` portátil e fácil de importar em ambientes MySQL/MariaDB, preservando schema e dados.
+Inclui também uma **interface web PHP** para uso local via XAMPP.
 
 ---
 
 ## Funcionalidades
 
-- Abre ficheiro `.sqlite`/`.db` local
-- Exporta:
-  - **Schema**: `CREATE TABLE`, `CREATE INDEX`, `CREATE VIEW`, `CREATE TRIGGER` (quando existirem)
-  - **Dados**: `INSERT INTO ... VALUES (...)` por batches (configurável)
-- Opções de dialeto:
-  - `sqlite`: exporta DDL tal como está no SQLite
-  - `mysql`: aplica conversões mínimas no DDL para compatibilidade com MySQL/MariaDB
-- Escaping correto de:
-  - strings com aspas
-  - `NULL`
-  - `BLOB` (hex `X'...'`)
-- Processamento eficiente por **stream** (gera ficheiros grandes sem estourar memória)
+- Exporta schema (`CREATE TABLE`, `CREATE INDEX`, `CREATE VIEW`, `CREATE TRIGGER`)
+- Exporta dados em `INSERT INTO ... VALUES (...)` por batches configuráveis
+- Conversão DDL para MySQL:
+  - Tipos: `TEXT→LONGTEXT`, `REAL→DOUBLE`, `BLOB→LONGBLOB`, `BOOLEAN→TINYINT(1)`, `NVARCHAR→VARCHAR`, `INT2→SMALLINT`, `INT8→BIGINT`, `NUMERIC→DECIMAL`, `DOUBLE PRECISION→DOUBLE`, etc.
+  - Remove: `ON CONFLICT`, `DEFERRABLE`, `COLLATE NOCASE/RTRIM`, `STRICT`, `WITHOUT ROWID`
+  - Remove cláusula `WHERE` de índices parciais (não suportada no MySQL < 8.0.13)
+  - Adiciona `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  - Escaping correcto de `'` e `\` por dialeto
+- Colunas geradas (`GENERATED ALWAYS AS`) excluídas automaticamente dos `INSERT`
+- Processamento por stream — funciona com bases grandes sem estourar memória
+- Filtro por tabelas via `--tables`
 
 ---
 
 ## Requisitos
 
-- Node.js 18+ (recomendado 20+)
-- Windows / Linux / macOS
+- **Node.js** ≥ 18
+- **PHP** ≥ 7.4 (apenas para a interface web)
 
 ---
 
 ## Instalação
 
-### 1) Clonar e instalar dependências
 ```bash
 git clone <repo-url>
 cd sqlite-to-sql
 npm install
-````
+```
 
-### 2) Executar localmente
+Para usar globalmente:
 
 ```bash
-node ./bin/sqlite-to-sql.js --help
+npm install -g .
 ```
 
 ---
 
 ## Uso (CLI)
 
-### Exportar como SQL SQLite (dump)
-
 ```bash
-node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/base.sqlite.sql --dialect sqlite
-```
+# Ajuda
+node ./bin/sqlite-to-sql.js --help
 
-### Exportar com dialeto MySQL/MariaDB
+# Dump SQLite
+node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/base.sqlite.sql
 
-```bash
+# Conversão para MySQL
 node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/base.mysql.sql --dialect mysql
-```
 
-### Ajustar tamanho do batch (INSERTs)
+# Só schema (sem dados)
+node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/schema.sql --no-data
 
-```bash
-node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/base.mysql.sql --dialect mysql --batch 1000
-```
+# Filtrar tabelas específicas
+node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/partial.sql --tables users,orders
 
-### Ignorar views/triggers (opcional)
-
-```bash
-node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/base.mysql.sql --dialect mysql --no-views --no-triggers
+# Batch maior e sem triggers/views
+node ./bin/sqlite-to-sql.js -i ./data/base.sqlite -o ./out/base.mysql.sql \
+  --dialect mysql --batch 1000 --no-views --no-triggers
 ```
 
 ---
 
-## Parâmetros
+## Opções
 
-| Opção           | Descrição                                                   | Padrão      |
-| --------------- | ----------------------------------------------------------- | ----------- |
-| `-i, --input`   | Caminho do ficheiro `.sqlite`/`.db`                         | obrigatório |
-| `-o, --output`  | Caminho do ficheiro `.sql` gerado                           | obrigatório |
-| `--dialect`     | `sqlite` ou `mysql`                                         | `sqlite`    |
-| `--batch`       | Quantidade de linhas por `INSERT`                           | `500`       |
-| `--no-data`     | Exporta apenas schema (sem INSERTs)                         | false       |
-| `--only-tables` | Exporta apenas tabelas e dados (sem índices/views/triggers) | false       |
-| `--no-indexes`  | Não exporta índices                                         | false       |
-| `--no-views`    | Não exporta views                                           | false       |
-| `--no-triggers` | Não exporta triggers                                        | false       |
-| `--tables`      | Lista de tabelas (separadas por vírgula) para exportar      | todas       |
+| Opção | Descrição | Padrão |
+|---|---|---|
+| `-i, --input` | Ficheiro `.sqlite`/`.db` de entrada | obrigatório |
+| `-o, --output` | Ficheiro `.sql` de saída | obrigatório |
+| `--dialect` | `sqlite` ou `mysql` | `sqlite` |
+| `--batch` | Linhas por `INSERT` | `500` |
+| `--no-data` | Exporta só schema | — |
+| `--only-tables` | Exporta só tabelas (ignora índices/views/triggers) | — |
+| `--no-indexes` | Omite `CREATE INDEX` | — |
+| `--no-views` | Omite `CREATE VIEW` | — |
+| `--no-triggers` | Omite `CREATE TRIGGER` | — |
+| `--tables` | Lista de tabelas (vírgula) | todas |
 
 ---
 
-## Importação no MySQL/MariaDB
+## Interface Web (XAMPP)
 
-### MySQL
+Coloca a pasta do projecto em `htdocs/` e acede a:
+
+```
+http://localhost/sqlite-export-sql/
+```
+
+A interface permite carregar o ficheiro `.sqlite`, configurar todas as opções e fazer download do `.sql` gerado, sem instalar nada além do XAMPP e Node.js.
+
+**Requisitos adicionais para a interface web:**
+- `shell_exec` activo no `php.ini`
+- `node` disponível no PATH do sistema
+- `upload_max_filesize` e `post_max_size` ajustados conforme o tamanho das bases
+
+---
+
+## Importar no MySQL / MariaDB
 
 ```bash
+# MySQL
 mysql -u root -p nome_da_base < ./out/base.mysql.sql
-```
 
-### MariaDB
-
-```bash
+# MariaDB
 mariadb -u root -p nome_da_base < ./out/base.mysql.sql
 ```
 
-> Dica: se houver constraints complexas, pode ser útil inserir no topo do `.sql`:
-
+O ficheiro gerado com `--dialect mysql` já inclui:
 ```sql
-SET FOREIGN_KEY_CHECKS=0;
-```
-
-e no fim:
-
-```sql
-SET FOREIGN_KEY_CHECKS=1;
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+-- ... schema e dados ...
+SET FOREIGN_KEY_CHECKS = 1;
 ```
 
 ---
 
-## Limitações conhecidas (dialeto MySQL)
+## Estrutura do projecto
 
-A conversão para MySQL/MariaDB é **compatibilidade básica**, focada em tabelas + dados.
-
-Pode exigir ajuste manual em:
-
-* `VIEW` e `TRIGGER` (sintaxe difere do SQLite)
-* funções específicas do SQLite (`datetime('now')`, `strftime`, etc.)
-* tipos muito livres do SQLite (MySQL é mais rígido)
-* `WITHOUT ROWID` (não suportado no MySQL)
-
----
-
-## Estrutura do projeto (sugerida)
-
-```text
+```
 sqlite-to-sql/
-├─ bin/
-│  └─ sqlite-to-sql.js          # CLI (parse args, chama exporter)
-├─ src/
-│  ├─ exporter.js               # lógica principal de export
-│  ├─ dialects/
-│  │  ├─ mysql.js               # conversões DDL para MySQL/MariaDB
-│  │  └─ sqlite.js              # pass-through (sem conversão)
-│  ├─ escape.js                 # escaping e serialização SQL
-│  └─ schema.js                 # leitura sqlite_master + PRAGMA table_info
-├─ data/                        # exemplo (opcional)
-├─ out/                         # output (gitignore)
-├─ package.json
-└─ README.md
+├── bin/
+│   └── sqlite-to-sql.js      # Entrada CLI (parse de args)
+├── src/
+│   ├── exporter.js           # Lógica principal de exportação
+│   ├── schema.js             # Leitura de sqlite_master + PRAGMA
+│   ├── escape.js             # Escaping SQL (dialect-aware)
+│   └── dialects/
+│       ├── mysql.js          # Conversões DDL para MySQL/MariaDB
+│       └── sqlite.js         # Pass-through (sem conversão)
+├── test/
+│   └── run-test.js           # Suite de testes de integração (73 asserções)
+├── index.php                 # Interface web (XAMPP)
+├── package.json
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## Roadmap (opcional)
+## Testes
 
-* Conversão avançada de DDL para MySQL:
+```bash
+npm test
+```
 
-  * `AUTOINCREMENT`
-  * `DEFAULT CURRENT_TIMESTAMP` e variações
-  * normalização de `BOOLEAN`, `DATETIME`, `JSON`
-* Export em modo:
+73 asserções cobrindo: tipos básicos e avançados, conversões DDL, escaping por dialeto, batching, filtros, colunas geradas, índices parciais, tabelas STRICT.
 
-  * `INSERT IGNORE`
-  * `REPLACE INTO`
-* Progresso / logging detalhado
-* Testes automatizados (Vitest/Jest)
-* Suporte a export seletivo por regex/namespace de tabelas
+---
+
+## Limitações conhecidas
+
+- **VIEWs e TRIGGERs** — sintaxe difere entre SQLite e MySQL; pode ser necessário ajuste manual
+- **Funções SQLite em DEFAULT** — `datetime('now')`, `strftime(...)` não são convertidas
+- **Índices parciais** — o predicado `WHERE` é removido; o índice fica sem filtro
+- **Tipos livres do SQLite** — tipos muito exóticos podem ficar como estão se não reconhecidos
 
 ---
 
 ## Licença
 
-MIT 
-
----
-
-## Contribuição
-
-PRs são bem-vindos:
-
-1. Fork
-2. Branch
-3. Pull request com descrição clara e exemplos
-
----
-
-## Autor
-
-Adjelson das Neves
-
+MIT — Adjelson Neves

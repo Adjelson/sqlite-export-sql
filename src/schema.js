@@ -70,11 +70,23 @@ export function getSchemaObjects(
 }
 
 export function getTableColumns(db, tableName) {
-  // PRAGMA table_info retorna: cid, name, type, notnull, dflt_value, pk
-  const info = db
-    .prepare(`PRAGMA table_info(${wrapSQLiteIdent(tableName)})`)
-    .all();
-  return info.map((c) => c.name);
+  // PRAGMA table_xinfo (SQLite 3.37+) includes a `hidden` field:
+  //   0 = normal column
+  //   1 = virtual generated column  (computed on read, not stored)
+  //   2 = stored generated column   (persisted but must not appear in INSERT)
+  // We exclude generated columns so the INSERT remains valid in MySQL/SQLite.
+  try {
+    const info = db
+      .prepare(`PRAGMA table_xinfo(${wrapSQLiteIdent(tableName)})`)
+      .all();
+    return info.filter((c) => c.hidden === 0).map((c) => c.name);
+  } catch (_) {
+    // Fallback for older SQLite versions that lack table_xinfo
+    const info = db
+      .prepare(`PRAGMA table_info(${wrapSQLiteIdent(tableName)})`)
+      .all();
+    return info.map((c) => c.name);
+  }
 }
 
 // Para PRAGMA e SELECT no SQLite, manter identificadores seguros.
