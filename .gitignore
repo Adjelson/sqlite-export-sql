@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-
+.claude/
 # Test artefacts
 test/_*.sql
 test/_*.sqlite
@@ -22,6 +22,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+.claude/
 
 # Environment
 .env
