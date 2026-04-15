@@ -1,7 +1,7 @@
 /* ══════════════════════════════════════════════════════════════════════════
    Electron — main process (ESM)
    ══════════════════════════════════════════════════════════════════════════ */
-import electron from 'electron';
+import * as electron from 'electron/main';
 const { app, BrowserWindow, ipcMain, dialog, shell } = electron;
 import path from 'path';
 import { fileURLToPath } from 'url';
