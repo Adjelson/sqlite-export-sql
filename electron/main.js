@@ -10,6 +10,9 @@ import os from 'os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Track active temp files so we can clean them up on quit
+const activeTmpFiles = new Set();
+
 // ── Window ────────────────────────────────────────────────────────────────
 function createWindow() {
   const win = new BrowserWindow({
@@ -23,16 +26,14 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,          // needed so preload can use require
+      sandbox: false,
     },
-    show: false,               // show after ready-to-show to avoid flash
+    show: false,
   });
 
-  // Remove menu bar in production; keep in dev for DevTools
   if (app.isPackaged) win.setMenu(null);
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-
   win.once('ready-to-show', () => win.show());
 }
 
@@ -45,6 +46,13 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Clean up any leftover temp files when the app exits
+app.on('before-quit', () => {
+  for (const f of activeTmpFiles) {
+    try { fs.unlinkSync(f); } catch {}
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -62,26 +70,40 @@ ipcMain.handle('get-info', () => ({
 /* ── Open file dialog ────────────────────────────────────────────────────── */
 ipcMain.handle('open-file', async () => {
   const { filePaths, canceled } = await dialog.showOpenDialog({
-    title: 'Select SQLite database',
+    title: 'Selecionar base de dados SQLite',
     properties: ['openFile'],
     filters: [
       { name: 'SQLite Database', extensions: ['sqlite', 'db', 'sqlite3'] },
-      { name: 'All files', extensions: ['*'] },
+      { name: 'Todos os ficheiros', extensions: ['*'] },
     ],
   });
   return canceled ? null : (filePaths[0] ?? null);
 });
 
-/* ── Save file dialog + write ────────────────────────────────────────────── */
-ipcMain.handle('save-file', async (_e, { content, filename }) => {
+/* ── Save file (move temp file to user-chosen path) ──────────────────────── */
+ipcMain.handle('save-file', async (_e, { tmpPath, filename }) => {
   const { filePath, canceled } = await dialog.showSaveDialog({
-    title: 'Save SQL file',
+    title: 'Guardar ficheiro SQL',
     defaultPath: filename,
     filters: [{ name: 'SQL File', extensions: ['sql'] }],
   });
   if (canceled || !filePath) return { saved: false };
-  fs.writeFileSync(filePath, content, 'utf8');
+
+  // Prefer atomic rename; fall back to copy+delete (cross-drive)
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch {
+    fs.copyFileSync(tmpPath, filePath);
+    try { fs.unlinkSync(tmpPath); } catch {}
+  }
+  activeTmpFiles.delete(tmpPath);
   return { saved: true, filePath };
+});
+
+/* ── Delete a temp file the renderer no longer needs ─────────────────────── */
+ipcMain.handle('cleanup-tmp', (_e, tmpPath) => {
+  try { fs.unlinkSync(tmpPath); } catch {}
+  activeTmpFiles.delete(tmpPath);
 });
 
 /* ── Conversion ──────────────────────────────────────────────────────────── */
@@ -104,19 +126,15 @@ ipcMain.handle('convert', async (_e, opts) => {
       onlyTableNames: opts.onlyTableNames ?? null,
     });
 
-    const sql  = fs.readFileSync(tmpOut, 'utf8');
-    const size = Buffer.byteLength(sql, 'utf8');
-    fs.unlinkSync(tmpOut);
+    const size    = fs.statSync(tmpOut).size;
+    const lines   = countLinesInFile(tmpOut);
+    const preview = readFirstLines(tmpOut, 200);
 
-    return {
-      success: true,
-      sql,
-      lines:   (sql.match(/\n/g) ?? []).length,
-      size,
-      sizeFmt: fmtBytes(size),
-    };
+    activeTmpFiles.add(tmpOut);
+
+    return { success: true, tmpPath: tmpOut, lines, size, sizeFmt: fmtBytes(size), preview };
   } catch (err) {
-    if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+    try { fs.unlinkSync(tmpOut); } catch {}
     return { success: false, error: err.message };
   }
 });
@@ -127,8 +145,41 @@ ipcMain.handle('show-in-folder', (_e, filePath) => {
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
 function fmtBytes(b) {
   if (b < 1024)      return b + ' B';
   if (b < 1_048_576) return (b / 1024).toFixed(1) + ' KB';
   return (b / 1_048_576).toFixed(2) + ' MB';
+}
+
+/** Count newlines in a file without loading it all into memory. */
+function countLinesInFile(filePath) {
+  const fd  = fs.openSync(filePath, 'r');
+  const buf = Buffer.allocUnsafe(65536);
+  let count = 0, n;
+  while ((n = fs.readSync(fd, buf, 0, buf.length)) > 0) {
+    for (let i = 0; i < n; i++) if (buf[i] === 10) count++;
+  }
+  fs.closeSync(fd);
+  return count;
+}
+
+/** Read the first `maxLines` lines of a file without loading all of it. */
+function readFirstLines(filePath, maxLines) {
+  const fd  = fs.openSync(filePath, 'r');
+  const buf = Buffer.allocUnsafe(65536);
+  let out = '', lines = 0, partial = '', done = false;
+  while (!done) {
+    const n = fs.readSync(fd, buf, 0, buf.length);
+    if (n === 0) { out += partial; break; }
+    const chunk  = partial + buf.subarray(0, n).toString('utf8');
+    const parts  = chunk.split('\n');
+    partial = parts.pop();
+    for (const line of parts) {
+      out += line + '\n';
+      if (++lines >= maxLines) { done = true; break; }
+    }
+  }
+  fs.closeSync(fd);
+  return out;
 }

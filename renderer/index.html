@@ -6,6 +6,7 @@
         content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>sqlite-to-sql</title>
+  <link rel="icon" href="../icone.ico" type="image/x-icon">
   <style>
     /* ── Reset ─────────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -264,10 +265,11 @@
 
   <!-- ── Title bar ──────────────────────────────────────────────────────── -->
   <div class="titlebar">
-    <svg class="titlebar-logo" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
-      <path stroke-linecap="round" stroke-linejoin="round"
-            d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7z"/>
-      <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h8M8 16h5M8 8h8"/>
+    <!-- Database cylinder icon -->
+    <svg class="titlebar-logo" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8">
+      <ellipse cx="12" cy="6" rx="8" ry="3"/>
+      <path stroke-linecap="round" d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6"/>
+      <path stroke-linecap="round" d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/>
     </svg>
     <span class="titlebar-title">sqlite-to-sql</span>
     <span class="titlebar-info" id="sysInfo">carregando…</span>
@@ -343,7 +345,7 @@
           </div>
         </div>
 
-        <button id="convertBtn" class="btn-convert">
+        <button id="convertBtn" type="button" class="btn-convert">
           <svg class="btn-icon" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round"
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
@@ -431,14 +433,14 @@ mariadb -u root -p nome_db &lt; ficheiro.sql</div>
       <div class="card-title">Resultado</div>
       <div class="result-meta" id="resultMeta"></div>
       <div class="result-actions">
-        <button class="btn btn-dl" id="btnSave">
+        <button class="btn btn-dl" type="button" id="btnSave">
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round"
                   d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
           </svg>
           <span id="btnSaveLabel">Guardar ficheiro…</span>
         </button>
-        <button class="btn btn-copy" id="btnCopy">
+        <button class="btn btn-copy" type="button" id="btnCopy">
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <rect x="9" y="9" width="13" height="13" rx="2"/>
             <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
@@ -464,9 +466,16 @@ mariadb -u root -p nome_db &lt; ficheiro.sql</div>
   });
 
   // ── State ─────────────────────────────────────────────────────────────
-  let selectedPath = null;
-  let lastSql      = null;
-  let lastFilename = null;
+  let selectedPath  = null;
+  let lastTmpPath   = null;   // path to temp .sql on disk
+  let lastPreview   = null;   // first 200 lines (string)
+  let lastTotalLines = 0;
+  let lastFilename  = null;
+
+  // Clean up temp file when the window is closed without saving
+  window.addEventListener('beforeunload', () => {
+    if (lastTmpPath) window.api.cleanupTmp(lastTmpPath);
+  });
 
   // ── Drop zone ─────────────────────────────────────────────────────────
   const dropZone = document.getElementById('dropZone');
@@ -531,11 +540,14 @@ mariadb -u root -p nome_db &lt; ficheiro.sql</div>
   // ── Convert ───────────────────────────────────────────────────────────
   convertBtn.addEventListener('click', async () => {
     if (!selectedPath) {
-      showToast('Selecciona um ficheiro .sqlite primeiro.', 'bad');
+      showToast('Seleciona um ficheiro .sqlite primeiro.', 'bad');
       return;
     }
 
-    const tablesRaw = document.getElementById('tables').value.trim();
+    // Clean up previous temp file before starting a new conversion
+    if (lastTmpPath) { window.api.cleanupTmp(lastTmpPath); lastTmpPath = null; }
+
+    const tablesRaw  = document.getElementById('tables').value.trim();
     const onlyTables = document.getElementById('onlyTables').checked;
 
     const opts = {
@@ -567,9 +579,12 @@ mariadb -u root -p nome_db &lt; ficheiro.sql</div>
 
   // ── Render result ─────────────────────────────────────────────────────
   function renderResult(r, dialect) {
-    lastSql      = r.sql;
-    lastFilename = selectedPath.split(/[\\/]/).pop().replace(/\.(sqlite|db|sqlite3)$/i, '')
-                   + '.' + dialect + '.sql';
+    lastTmpPath    = r.tmpPath;
+    lastPreview    = r.preview;
+    lastTotalLines = r.lines;
+    lastFilename   = selectedPath.split(/[\\/]/).pop()
+                       .replace(/\.(sqlite|db|sqlite3)$/i, '')
+                     + '.' + dialect + '.sql';
 
     // Meta chips
     const chips = [
@@ -583,14 +598,14 @@ mariadb -u root -p nome_db &lt; ficheiro.sql</div>
 
     document.getElementById('btnSaveLabel').textContent = 'Guardar ' + lastFilename;
 
-    // Preview (first 120 lines)
-    const lines = r.sql.split('\n');
-    const pre   = document.getElementById('sqlPreview');
-    pre.textContent = lines.slice(0, 120).join('\n');
-    if (lines.length > 120) {
+    // Preview — main.js already limited to 200 lines
+    const previewLines = r.preview.split('\n');
+    const pre = document.getElementById('sqlPreview');
+    pre.textContent = previewLines.slice(0, 120).join('\n');
+    if (r.lines > 120) {
       const note = document.createElement('div');
       note.className = 'preview-note';
-      note.textContent = `— pré-visualização: primeiras 120 de ${lines.length.toLocaleString('pt')} linhas —`;
+      note.textContent = `— pré-visualização: primeiras 120 de ${r.lines.toLocaleString('pt')} linhas —`;
       pre.appendChild(note);
     }
 
@@ -601,23 +616,26 @@ mariadb -u root -p nome_db &lt; ficheiro.sql</div>
 
   // ── Save ──────────────────────────────────────────────────────────────
   document.getElementById('btnSave').addEventListener('click', async () => {
-    if (!lastSql) return;
-    const r = await window.api.saveFile({ content: lastSql, filename: lastFilename });
+    if (!lastTmpPath) return;
+    const r = await window.api.saveFile({ tmpPath: lastTmpPath, filename: lastFilename });
     if (r.saved) {
+      lastTmpPath = null; // temp file was moved — nothing left to clean up
       showToast('Guardado em: ' + r.filePath, 'ok');
     }
   });
 
   // ── Copy ──────────────────────────────────────────────────────────────
   document.getElementById('btnCopy').addEventListener('click', async () => {
-    if (!lastSql) return;
+    if (!lastPreview) return;
     try {
-      await navigator.clipboard.writeText(lastSql);
+      await navigator.clipboard.writeText(lastPreview);
       const b = document.getElementById('btnCopy');
       const orig = b.innerHTML;
-      b.innerHTML = '✓ Copiado!';
+      const isPartial = lastTotalLines > 200;
+      b.innerHTML = isPartial ? '✓ Copiadas 200 linhas' : '✓ Copiado!';
       b.style.cssText = 'border-color:var(--ok);color:var(--ok)';
-      setTimeout(() => { b.innerHTML = orig; b.style.cssText = ''; }, 2000);
+      if (isPartial) showToast('Pré-visualização copiada (primeiras 200 linhas). Usa Guardar para o ficheiro completo.', 'ok');
+      setTimeout(() => { b.innerHTML = orig; b.style.cssText = ''; }, 2500);
     } catch {
       showToast('Falha ao copiar.', 'bad');
     }

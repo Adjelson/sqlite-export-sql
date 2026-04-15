@@ -8,11 +8,11 @@
     "sqlite-to-sql": "./bin/sqlite-to-sql.js"
   },
   "scripts": {
-    "start":            "node ./bin/sqlite-to-sql.js --help",
-    "test":             "node ./test/run-test.js",
-    "electron":         "electron .",
+    "start": "node ./bin/sqlite-to-sql.js --help",
+    "test": "node ./test/run-test.js",
+    "electron": "electron .",
     "electron:rebuild": "electron-rebuild",
-    "electron:build":   "electron-builder --win",
+    "electron:build": "electron-builder --win",
     "electron:build:all": "electron-builder -mwl"
   },
   "files": [
@@ -21,8 +21,16 @@
     "README.md"
   ],
   "keywords": [
-    "sqlite", "mysql", "mariadb", "sql", "export",
-    "converter", "dump", "cli", "migration", "electron"
+    "sqlite",
+    "mysql",
+    "mariadb",
+    "sql",
+    "export",
+    "converter",
+    "dump",
+    "cli",
+    "migration",
+    "electron"
   ],
   "author": "Adjelson Neves",
   "license": "MIT",
@@ -57,8 +65,18 @@
     "win": {
       "icon": "icone.ico",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
