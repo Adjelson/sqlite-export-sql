@@ -98,6 +98,19 @@ function buildTestDb() {
       level INTEGER DEFAULT 0
     ) STRICT;
 
+    -- ── SQLite datetime defaults + TEXT DEFAULT stripping ─────────────────────
+    --   created_at  DATETIME DEFAULT (datetime('now')) → keep DEFAULT CURRENT_TIMESTAMP
+    --   updated_at  TEXT     DEFAULT (datetime('now')) → LONGTEXT, DEFAULT stripped
+    --   note        TEXT     DEFAULT 'pending'         → LONGTEXT, DEFAULT stripped
+    --   version     TEXT     DEFAULT NULL              → LONGTEXT, DEFAULT NULL kept
+    CREATE TABLE events (
+      id          INTEGER  PRIMARY KEY AUTOINCREMENT,
+      created_at  DATETIME DEFAULT (datetime('now')),
+      updated_at  TEXT     NOT NULL DEFAULT (datetime('now')),
+      note        TEXT     DEFAULT 'pending',
+      version     TEXT     DEFAULT NULL
+    );
+
     -- ── Indexes ───────────────────────────────────────────────────────────────
     CREATE UNIQUE INDEX idx_users_email     ON users(email);
     CREATE INDEX        idx_posts_user      ON posts(user_id);
@@ -146,6 +159,9 @@ function buildTestDb() {
   const insLog = db.prepare(`INSERT INTO logs (msg, level) VALUES (?, ?)`);
   insLog.run("Application started", 0);
   insLog.run("Error occurred",      2);
+
+  const insEvt = db.prepare(`INSERT INTO events (note) VALUES (?)`);
+  insEvt.run("launch");
 
   db.close();
   console.log(`[setup] Test DB created: ${DB_PATH}`);
@@ -280,6 +296,31 @@ function validateMysqlOutput(sql) {
   // Generated columns excluded from INSERT
   assertNotContains(sql, "`subtotal`",            "generated STORED col excluded from INSERT");
   assertNotContains(sql, "`label`",               "generated VIRTUAL col excluded from INSERT");
+
+  // ── DEFAULT datetime conversions ──
+  // DATETIME column: datetime('now') → CURRENT_TIMESTAMP
+  assertContains(sql, "DEFAULT CURRENT_TIMESTAMP",
+    "DATETIME column: DEFAULT (datetime('now')) → DEFAULT CURRENT_TIMESTAMP");
+  // No raw SQLite datetime() calls in DDL lines (skip header comments)
+  const ddlOnly = sql.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+  assertNotContains(ddlOnly, "datetime('now')",
+    "no raw datetime('now') in MySQL DDL");
+
+  // ── TEXT/BLOB DEFAULT stripping ──
+  // updated_at: TEXT→LONGTEXT with DEFAULT (datetime('now')) → DEFAULT stripped
+  // note:       TEXT→LONGTEXT with DEFAULT 'pending'         → DEFAULT stripped
+  // version:    TEXT→LONGTEXT with DEFAULT NULL              → DEFAULT NULL kept
+  // Table name is unquoted in DDL (backticks only added if SQLite stores them)
+  const eventsTable = sql.match(/CREATE TABLE\s+`?events`?\s*\([\s\S]*?ENGINE=/im)?.[0] ?? "";
+  assert(eventsTable.length > 0, "events table present in MySQL output");
+  assert(
+    /updated_at\s+LONGTEXT\s+NOT\s+NULL(?!\s+DEFAULT)/i.test(eventsTable),
+    "LONGTEXT NOT NULL column: DEFAULT (datetime) stripped"
+  );
+  assertNotContains(eventsTable, "DEFAULT 'pending'",
+    "LONGTEXT column: literal DEFAULT stripped");
+  assertContains(eventsTable, "DEFAULT NULL",
+    "LONGTEXT column: DEFAULT NULL preserved");
 }
 
 function validateFilteredExport() {

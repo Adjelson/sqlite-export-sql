@@ -30,6 +30,11 @@
  *   WITHOUT ROWID                      → removed
  *   STRICT modifier (SQLite 3.37+)     → removed
  *   Partial index WHERE clause         → removed
+ *   DEFAULT (datetime('now'))          → DEFAULT CURRENT_TIMESTAMP
+ *   DEFAULT (date('now'))              → DEFAULT CURRENT_DATE
+ *   DEFAULT (time('now'))              → DEFAULT CURRENT_TIME
+ *   DEFAULT (strftime/julianday/…)     → stripped (no MySQL equivalent)
+ *   TEXT/BLOB DEFAULT literal/expr     → stripped (invalid in MySQL < 8.0.13)
  *   CREATE TABLE                       → ENGINE=InnoDB + utf8mb4 appended
  */
 
@@ -109,7 +114,45 @@ export function transformDDL(sql) {
     out = out.replace(/\s+WHERE\s+[\s\S]+$/i, "");
   }
 
-  // ── 5. CREATE TABLE — remove table options + append ENGINE ───────────────
+  // ── 5. SQLite DEFAULT functions → MySQL equivalents ───────────────────────
+  // Handles both forms: DEFAULT (datetime('now')) and DEFAULT datetime('now')
+  // The inner regex `[^()]*(?:\([^()]*\)[^()]*)*` matches one level of nesting
+  // so it covers strftime('%Y-%m-%d', 'now') and datetime('now', 'localtime').
+  out = out.replace(
+    /\bDEFAULT\s+\(([^()]*(?:\([^()]*\)[^()]*)*)\)/gi,
+    (_match, inner) => {
+      const t = inner.trim();
+      if (/^datetime\s*\(/i.test(t))                        return "DEFAULT CURRENT_TIMESTAMP";
+      if (/^date\s*\(/i.test(t))                            return "DEFAULT CURRENT_DATE";
+      if (/^time\s*\(/i.test(t))                            return "DEFAULT CURRENT_TIME";
+      if (/^(?:strftime|julianday|unixepoch)\s*\(/i.test(t)) return ""; // strip — no equivalent
+      return _match; // literal in parens — keep as-is
+    }
+  );
+  // Bare function calls (some SQLite versions omit the outer parens)
+  out = out.replace(/\bDEFAULT\s+datetime\s*\([^)]*\)/gi,                      "DEFAULT CURRENT_TIMESTAMP");
+  out = out.replace(/\bDEFAULT\s+date\s*\([^)]*\)/gi,                           "DEFAULT CURRENT_DATE");
+  out = out.replace(/\bDEFAULT\s+time\s*\([^)]*\)/gi,                           "DEFAULT CURRENT_TIME");
+  out = out.replace(/\bDEFAULT\s+(?:strftime|julianday|unixepoch)\s*\([^)]*\)/gi, "");
+
+  // ── 6. TEXT/BLOB columns: strip non-NULL DEFAULT (invalid in MySQL < 8.0.13) ─
+  // After type conversion, TEXT→LONGTEXT etc. Process line by line so we only
+  // touch column definition lines that carry both a text/blob type and DEFAULT.
+  if (/^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE/i.test(out)) {
+    const textBlobRe = /\b(?:(?:LONG|MEDIUM|TINY)?TEXT|(?:LONG|MEDIUM|TINY)?BLOB)\b/i;
+    out = out.split("\n").map((line) => {
+      if (!textBlobRe.test(line) || !/\bDEFAULT\b/i.test(line)) return line;
+      if (/\bDEFAULT\s+NULL\b/i.test(line)) return line; // NULL is valid everywhere
+      // Strip the DEFAULT clause (value may be: quoted string, (expr), or bare token).
+      // Use [^\s,)]+ (not \S+) so the trailing comma/paren is NOT consumed.
+      return line.replace(
+        /\s+DEFAULT\s+(?:\((?:[^()]*(?:\([^()]*\)[^()]*)*)\)|'[^']*'|"[^"]*"|[^\s,)]+)/gi,
+        ""
+      );
+    }).join("\n");
+  }
+
+  // ── 7. CREATE TABLE — remove table options + append ENGINE ───────────────
   if (/^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE/i.test(out)) {
     // Remove STRICT modifier (SQLite 3.37+)
     out = out.replace(/\bSTRICT\b/gi, "");
@@ -139,7 +182,8 @@ export function header() {
     "--   • VIEWs and TRIGGERs may need manual review (syntax differs from SQLite).",
     "--   • NOCASE/RTRIM collations stripped — add per-column collation if needed.",
     "--   • Filtered index predicates removed (not supported in MySQL < 8.0.13).",
-    "--   • SQLite functions in DEFAULT expressions (datetime, strftime…) are not converted.",
+    "--   • datetime('now') DEFAULT → CURRENT_TIMESTAMP; strftime/julianday stripped.",
+    "--   • TEXT/BLOB DEFAULT (non-NULL) stripped — not valid in MySQL < 8.0.13.",
     "",
     "SET NAMES utf8mb4;",
     "SET FOREIGN_KEY_CHECKS = 0;",
