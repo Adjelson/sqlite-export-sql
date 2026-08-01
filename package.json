@@ -1,0 +1,104 @@
+{
+  "name": "sqlite-to-sql",
+  "version": "2.0.0",
+  "description": "Automatic and safe SQLite to MySQL/MariaDB converter with CLI, Electron and PHP interfaces",
+  "type": "module",
+  "main": "electron/main.js",
+  "bin": {
+    "sqlite-to-sql": "./bin/sqlite-to-sql.js"
+  },
+  "scripts": {
+    "start": "node ./bin/sqlite-to-sql.js --help",
+    "test": "node ./test/run-test.js && node ./test/regression-test.js",
+    "electron": "electron .",
+    "electron:rebuild": "electron-rebuild",
+    "electron:build": "electron-builder --win",
+    "electron:build:all": "electron-builder -mwl",
+    "convert": "node ./bin/sqlite-to-sql.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "electron/",
+    "renderer/",
+    "README.md",
+    "CONVERTER_AUTOMATICO.bat",
+    "converter-automatico.sh",
+    "CHANGELOG.md",
+    "index.php"
+  ],
+  "keywords": [
+    "sqlite",
+    "mysql",
+    "mariadb",
+    "sql",
+    "export",
+    "converter",
+    "dump",
+    "cli",
+    "migration",
+    "electron"
+  ],
+  "author": "Adjelson Neves",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.adjelson.sqlite-to-sql",
+    "productName": "sqlite-to-sql",
+    "copyright": "© Adjelson Neves",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "renderer/**",
+      "src/**",
+      "node_modules/**",
+      "icone.ico",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "win": {
+      "icon": "icone.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icone.ico",
+      "uninstallerIcon": "icone.ico"
+    },
+    "mac": {
+      "icon": "icone.ico",
+      "target": "dmg"
+    },
+    "linux": {
+      "icon": "icone.ico",
+      "target": "AppImage"
+    }
+  }
+}
